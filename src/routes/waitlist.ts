@@ -3,10 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 // POST /api/waitlist - 加入 Waitlist
 router.post('/', async (req: Request, res: Response) => {
@@ -16,6 +18,8 @@ router.post('/', async (req: Request, res: Response) => {
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Valid email is required' });
     }
+
+    const supabase = getSupabase();
 
     // 检查是否已存在
     const { data: existing } = await supabase
@@ -58,6 +62,8 @@ router.post('/', async (req: Request, res: Response) => {
 // GET /api/waitlist/count - 获取 Waitlist 人数（内部用）
 router.get('/count', async (_req: Request, res: Response) => {
   try {
+    const supabase = getSupabase();
+
     const { count } = await supabase
       .from('waitlist')
       .select('*', { count: 'exact', head: true });

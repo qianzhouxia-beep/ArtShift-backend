@@ -3,10 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY! // Auth 路由用 anon key，不用 service role
-);
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!
+  );
+}
 
 // POST /api/auth/signup - 注册
 router.post('/signup', async (req: Request, res: Response) => {
@@ -16,6 +18,8 @@ router.post('/signup', async (req: Request, res: Response) => {
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
+
+    const supabase = getSupabase();
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -55,6 +59,8 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    const supabase = getSupabase();
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -77,8 +83,9 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // POST /api/auth/logout - 登出
-router.post('/logout', async (req: Request, res: Response) => {
+router.post('/logout', async (_req: Request, res: Response) => {
   try {
+    const supabase = getSupabase();
     const { error } = await supabase.auth.signOut();
     if (error) {
       return res.status(400).json({ error: error.message });

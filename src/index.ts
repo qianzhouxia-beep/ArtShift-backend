@@ -1,12 +1,12 @@
+import dotenv from 'dotenv';
+dotenv.config(); // 必须在任何 import 之前加载环境变量
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 
 import generationRoutes from './routes/generation';
 import waitlistRoutes from './routes/waitlist';
 import authRoutes from './routes/auth';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;

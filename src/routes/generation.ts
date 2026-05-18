@@ -3,10 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// 延迟初始化：避免 dotenv.config() 未执行时读取环境变量
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 // GET /api/generation/styles - 获取支持的风格列表
 router.get('/styles', (_req: Request, res: Response) => {
@@ -72,6 +75,8 @@ router.post('/generate', async (req: Request, res: Response) => {
 
     const result: any = await response.json();
     const base64Image = result.artifacts[0].base64;
+
+    const supabase = getSupabase();
 
     // 上传到 Supabase Storage
     const fileName = `gen_${Date.now()}_${style}.png`;
