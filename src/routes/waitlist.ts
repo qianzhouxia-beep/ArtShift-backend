@@ -1,13 +1,24 @@
 import { Router, Request, Response } from 'express';
-import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+const SB_URL = process.env.SUPABASE_URL!;
+const SB_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+// Direct REST calls to Supabase — more reliable than JS client in serverless
+async function supabaseFetch(table: string, body?: object) {
+  const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method: body ? 'POST' : 'GET',
+    headers: {
+      'apikey': SB_ROLE_KEY,
+      'Authorization': `Bearer ${SB_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data: any = await res.json();
+  return { ok: res.ok, status: res.status, data };
 }
 
 // POST /api/waitlist - 加入 Waitlist
@@ -19,33 +30,27 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Valid email is required' });
     }
 
-    const supabase = getSupabase();
-
     // 检查是否已存在
-    const { data: existing } = await supabase
-      .from('waitlist')
-      .select('id')
-      .eq('email', email)
-      .single();
+    const existingResult = await supabaseFetch(
+      `waitlist?email=eq.${encodeURIComponent(email)}&select=id&limit=1`
+    );
+    const existing: any[] = existingResult.data as any[];
 
-    if (existing) {
+    if (existing && existing.length > 0) {
       return res.json({ success: true, message: 'Already on waitlist', position: null });
     }
 
     // 插入新记录
-    const { error } = await supabase
-      .from('waitlist')
-      .insert({ email });
+    const insertRes = await supabaseFetch('waitlist', { email });
 
-    if (error) {
-      console.error('Waitlist insert error:', error);
-      return res.status(500).json({ error: 'Failed to join waitlist' });
+    if (!insertRes.ok) {
+      console.error('Waitlist insert error:', insertRes.data);
+      return res.status(500).json({ error: 'Failed to join waitlist', detail: insertRes.data });
     }
 
     // 获取当前排队位置
-    const { count } = await supabase
-      .from('waitlist')
-      .select('*', { count: 'exact', head: true });
+    const countRes = await supabaseFetch('waitlist?select=*');
+    const count = Array.isArray(countRes.data) ? countRes.data.length : 0;
 
     res.json({
       success: true,
@@ -55,20 +60,16 @@ router.post('/', async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('Waitlist error:', error);
-    res.status(500).json({ error: 'Failed to join waitlist', message: error.message });
+    return res.status(500).json({ error: 'Failed to join waitlist', message: error.message });
   }
 });
 
 // GET /api/waitlist/count - 获取 Waitlist 人数（内部用）
 router.get('/count', async (_req: Request, res: Response) => {
   try {
-    const supabase = getSupabase();
-
-    const { count } = await supabase
-      .from('waitlist')
-      .select('*', { count: 'exact', head: true });
-
-    res.json({ count: count || 0 });
+    const r = await supabaseFetch('waitlist?select=id');
+    const count = Array.isArray(r.data) ? r.data.length : 0;
+    res.json({ count });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get count', message: error.message });
   }
