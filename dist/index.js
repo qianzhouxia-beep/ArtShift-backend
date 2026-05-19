@@ -22,6 +22,17 @@ app.use(express_1.default.json());
 app.use('/api/generation', generation_1.default);
 app.use('/api/waitlist', waitlist_1.default);
 app.use('/api/auth', auth_1.default);
+// 调试接口 - 查看运行时环境变量状态
+app.get('/api/debug', (_req, res) => {
+    const mask = (s) => s ? `${s.slice(0, 8)}...${s.slice(-6)}` : 'NOT SET';
+    res.json({
+        SUPABASE_URL: mask(process.env.SUPABASE_URL),
+        SUPABASE_ANON_KEY: mask(process.env.SUPABASE_ANON_KEY),
+        SUPABASE_SERVICE_ROLE_KEY: mask(process.env.SUPABASE_SERVICE_ROLE_KEY),
+        PORT: process.env.PORT || 'NOT SET',
+        NODE_ENV: process.env.NODE_ENV || 'NOT SET',
+    });
+});
 // 健康检查
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
