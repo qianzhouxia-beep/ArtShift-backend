@@ -3,15 +3,15 @@ import { Router, Request, Response } from 'express';
 const router = Router();
 
 const SB_URL = process.env.SUPABASE_URL!;
-const SB_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!;
 
 // Direct REST calls to Supabase — more reliable than JS client in serverless
 async function supabaseFetch(table: string, body?: object) {
   const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
     method: body ? 'POST' : 'GET',
     headers: {
-      'apikey': SB_ROLE_KEY,
-      'Authorization': `Bearer ${SB_ROLE_KEY}`,
+      'apikey': SB_KEY,
+      'Authorization': `Bearer ${SB_KEY}`,
       'Content-Type': 'application/json',
       'Prefer': 'return=representation',
     },
