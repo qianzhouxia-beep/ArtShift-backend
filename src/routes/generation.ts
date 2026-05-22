@@ -180,28 +180,46 @@ router.post(
       const enhancedPrompt = prompt
         ? `${prompt}, ${stylePrompt}`
         : stylePrompt;
-      const imageStrength = parseFloat(strength) || 0.55; // 0.3-0.7 range for style transfer
+      const imageStrength = (parseFloat(strength) || 55) / 100; // 前端传 0-100 百分比，转 0-1
 
-      // Stability AI img2img 接口使用 multipart/form-data
-      const FormData = (await import('form-data')).default;
-      const formData = new FormData();
+      // Stability AI v1 img2img
+      // 手动构建 multipart/form-data body
+      // Node.js form-data 库生成的 multipart 被 Stability 拒绝
+      
+      const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
+      const parts: Buffer[] = [];
 
-      formData.append('init_image', file.buffer, {
-        filename: 'init_image.png',
-        contentType: file.mimetype || 'image/png',
-      });
-      formData.append(
-        'init_image_mode',
-        'IMAGE_STRENGTH' // 使用 image_strength 参数控制风格强度
-      );
-      formData.append('image_strength', String(1 - imageStrength)); // API 参数是"保留原图的程度"
-      formData.append(
-        'text_prompts[0]',
-        enhancedPrompt
-      );
-      formData.append('cfg_scale', String(tier.cfgScale));
-      formData.append('steps', String(tier.steps));
-      formData.append('samples', '1');
+      // Add text field
+      const addField = (name: string, value: string) => {
+        parts.push(Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+        ));
+      };
+
+      // Add file field
+      const addFile = (name: string, filename: string, data: Buffer, contentType: string) => {
+        parts.push(Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n`
+        ));
+        parts.push(data);
+        parts.push(Buffer.from('\r\n'));
+      };
+
+      // 确保 init_image 是 PNG 格式
+      // Multer 的 file.buffer 可能是任意格式，统一当 PNG 处理
+      addFile('init_image', 'init_image.png', file.buffer, 'image/png');
+      addField('init_image_mode', 'IMAGE_STRENGTH');
+      addField('image_strength', String(1 - imageStrength));
+      addField('text_prompts[0][text]', enhancedPrompt);
+      addField('text_prompts[0][weight]', '1');
+      addField('cfg_scale', String(tier.cfgScale));
+      addField('steps', String(tier.steps));
+      addField('samples', '1');
+
+      // Closing boundary
+      parts.push(Buffer.from(`--${boundary}--\r\n`));
+
+      const body = Buffer.concat(parts);
 
       const response = await fetch(
         `https://api.stability.ai/v1/generation/${tier.model}/image-to-image`,
@@ -210,15 +228,14 @@ router.post(
           headers: {
             Authorization: `Bearer ${process.env.STABILITY_API_KEY}`,
             Accept: 'application/json',
-            ...formData.getHeaders(),
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
           },
-          body: formData,
+          body: new Uint8Array(body),
         }
       );
 
       if (!response.ok) {
         const error = await response.json();
-        console.error('Stability AI img2img error:', error);
         return res
           .status(502)
           .json({ error: 'AI style transfer failed', details: error });
