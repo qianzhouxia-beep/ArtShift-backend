@@ -143,7 +143,9 @@ router.post('/image-to-image', upload.single('image'), async (req, res) => {
         const enhancedPrompt = prompt
             ? `${prompt}, ${stylePrompt}`
             : stylePrompt;
-        const imageStrength = (parseFloat(strength) || 55) / 100; // 前端传 0-100 百分比，转 0-1
+        // 前端 slider 传 0-1 浮点数(0.2-0.8)，curl 测试可能传 0-100 整数
+        const rawStrength = parseFloat(strength) || 0.55;
+        const imageStrength = rawStrength > 1 ? rawStrength / 100 : rawStrength;
         // Stability AI v1 img2img
         // 手动构建 multipart/form-data body
         // Node.js form-data 库生成的 multipart 被 Stability 拒绝
