@@ -12,8 +12,22 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // 中间件
+const allowedOrigins = [
+  'https://artshift.api-tokenmaster.com',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5173',
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://artshift.api-tokenmaster.com',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
