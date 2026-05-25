@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-// @ts-expect-error - @supabase/supabase-js types issue, works at runtime
 import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
