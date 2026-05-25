@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+// @ts-expect-error - @supabase/supabase-js types issue, works at runtime
 const supabase_js_1 = require("@supabase/supabase-js");
 const multer_1 = __importDefault(require("multer"));
 const router = (0, express_1.Router)();

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+// @ts-expect-error - @supabase/supabase-js types issue, works at runtime
 const supabase_js_1 = require("@supabase/supabase-js");
 const router = (0, express_1.Router)();
 function getSupabase() {
