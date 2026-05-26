@@ -11,9 +11,6 @@ import authRoutes from './routes/auth';
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// 增加请求超时时间（Stability AI img2img 可能需要 30s+）
-app.setTimeout(120000); // 2 分钟超时
-
 // 中间件
 const allowedOrigins = [
   'https://artshift.api-tokenmaster.com',
@@ -69,9 +66,12 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 ArtShift Backend running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/health`);
 });
+
+// 设置超时（Stability AI img2img 可能需要 30s+）
+server.setTimeout(120000); // 2 分钟超时
 
 export default app;
