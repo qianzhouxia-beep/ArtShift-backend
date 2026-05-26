@@ -164,6 +164,12 @@ router.post(
   '/image-to-image',
   upload.single('image'),
   async (req: Request, res: Response) => {
+    console.log('[img2img] Request received:', {
+      hasFile: !!req.file,
+      style: req.body?.style,
+      quality: req.body?.quality,
+      contentLength: req.headers['content-length'],
+    });
     try {
       const { style, quality, userId, prompt, strength } = req.body;
       const file = req.file;
@@ -223,6 +229,9 @@ router.post(
 
       const body = Buffer.concat(parts);
 
+      console.log('[img2img] Calling Stability AI img2img, body size:', body.length);
+      const startTime = Date.now();
+
       const response = await fetch(
         `https://api.stability.ai/v1/generation/${tier.model}/image-to-image`,
         {
@@ -238,10 +247,13 @@ router.post(
 
       if (!response.ok) {
         const error = await response.json();
+        console.error('[img2img] Stability AI error:', response.status, error);
         return res
           .status(502)
           .json({ error: 'AI style transfer failed', details: error });
       }
+
+      console.log('[img2img] Stability AI responded OK, elapsed:', Date.now() - startTime, 'ms');
 
       const result: any = await response.json();
       const imageUrl = await uploadToStorage(

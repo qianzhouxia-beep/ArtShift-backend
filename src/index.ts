@@ -11,6 +11,9 @@ import authRoutes from './routes/auth';
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// 增加请求超时时间（Stability AI img2img 可能需要 30s+）
+app.setTimeout(120000); // 2 分钟超时
+
 // 中间件
 const allowedOrigins = [
   'https://artshift.api-tokenmaster.com',
@@ -32,7 +35,7 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // 路由
 app.use('/api/generation', generationRoutes);
