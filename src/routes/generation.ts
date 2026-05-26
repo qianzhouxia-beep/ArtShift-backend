@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
+import sharp from 'sharp';
 
 const router = Router();
 
@@ -190,6 +191,21 @@ router.post(
       const rawStrength = parseFloat(strength) || 0.55;
       const imageStrength = rawStrength > 1 ? rawStrength / 100 : rawStrength;
 
+      // ─── Resize 小图到 SDXL 合法尺寸 ──────────────────
+      // SDXL 要求尺寸必须是: 1024x1024, 1152x896, 1216x832, 1344x768,
+      //   1536x640, 640x1536, 768x1344, 832x1216, 896x1152
+      // 统一 resize 到 1024x1024（最安全）
+      let processedBuffer = file.buffer;
+      const metadata = await sharp(file.buffer).metadata();
+      const { width = 0, height = 0 } = metadata;
+      if (width < 1024 || height < 1024) {
+        console.log(`[img2img] Resizing image from ${width}x${height} to 1024x1024`);
+        processedBuffer = await sharp(file.buffer)
+          .resize(1024, 1024, { fit: 'cover', position: 'centre' })
+          .png()
+          .toBuffer();
+      }
+
       // Stability AI v1 img2img
       // 手动构建 multipart/form-data body
       // Node.js form-data 库生成的 multipart 被 Stability 拒绝
@@ -213,9 +229,8 @@ router.post(
         parts.push(Buffer.from('\r\n'));
       };
 
-      // 确保 init_image 是 PNG 格式
-      // Multer 的 file.buffer 可能是任意格式，统一当 PNG 处理
-      addFile('init_image', 'init_image.png', file.buffer, 'image/png');
+      // 使用 resize 后的图片（或原图如果已足够大）
+      addFile('init_image', 'init_image.png', processedBuffer, 'image/png');
       addField('init_image_mode', 'IMAGE_STRENGTH');
       addField('image_strength', String(1 - imageStrength));
       addField('text_prompts[0][text]', enhancedPrompt);
