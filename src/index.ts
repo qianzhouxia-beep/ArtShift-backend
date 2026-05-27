@@ -7,6 +7,7 @@ import cors from 'cors';
 import generationRoutes from './routes/generation';
 import waitlistRoutes from './routes/waitlist';
 import authRoutes from './routes/auth';
+import paymentsRoutes from './routes/payments';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -38,6 +39,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use('/api/generation', generationRoutes);
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/payments', paymentsRoutes);
 
 // 调试接口 - 查看运行时环境变量状态
 app.get('/api/debug', (_req, res) => {

@@ -10,6 +10,7 @@ const cors_1 = __importDefault(require("cors"));
 const generation_1 = __importDefault(require("./routes/generation"));
 const waitlist_1 = __importDefault(require("./routes/waitlist"));
 const auth_1 = __importDefault(require("./routes/auth"));
+const payments_1 = __importDefault(require("./routes/payments"));
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8080;
 // 中间件
@@ -33,11 +34,12 @@ app.use((0, cors_1.default)({
     },
     credentials: true
 }));
-app.use(express_1.default.json());
+app.use(express_1.default.json({ limit: '20mb' }));
 // 路由
 app.use('/api/generation', generation_1.default);
 app.use('/api/waitlist', waitlist_1.default);
 app.use('/api/auth', auth_1.default);
+app.use('/api/payments', payments_1.default);
 // 调试接口 - 查看运行时环境变量状态
 app.get('/api/debug', (_req, res) => {
     const mask = (s) => s ? `${s.slice(0, 8)}...${s.slice(-6)}` : 'NOT SET';
@@ -62,9 +64,11 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error', message: err.message });
 });
 // 启动服务器
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`🚀 ArtShift Backend running on port ${PORT}`);
     console.log(`📡 Health check: http://localhost:${PORT}/health`);
 });
+// 设置超时（Stability AI img2img 可能需要 30s+）
+server.setTimeout(120000); // 2 分钟超时
 exports.default = app;
 //# sourceMappingURL=index.js.map

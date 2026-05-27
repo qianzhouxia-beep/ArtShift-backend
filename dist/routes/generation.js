@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const supabase_js_1 = require("@supabase/supabase-js");
 const multer_1 = __importDefault(require("multer"));
+const sharp_1 = __importDefault(require("sharp"));
 const router = (0, express_1.Router)();
 // Multer 配置：内存存储，限制 10MB
 const upload = (0, multer_1.default)({
@@ -129,6 +130,12 @@ router.post('/text-to-image', async (req, res) => {
 });
 // ─── POST /api/generation/image-to-image ───────────────────
 router.post('/image-to-image', upload.single('image'), async (req, res) => {
+    console.log('[img2img] Request received:', {
+        hasFile: !!req.file,
+        style: req.body?.style,
+        quality: req.body?.quality,
+        contentLength: req.headers['content-length'],
+    });
     try {
         const { style, quality, userId, prompt, strength } = req.body;
         const file = req.file;
@@ -146,6 +153,20 @@ router.post('/image-to-image', upload.single('image'), async (req, res) => {
         // 前端 slider 传 0-1 浮点数(0.2-0.8)，curl 测试可能传 0-100 整数
         const rawStrength = parseFloat(strength) || 0.55;
         const imageStrength = rawStrength > 1 ? rawStrength / 100 : rawStrength;
+        // ─── Resize 小图到 SDXL 合法尺寸 ──────────────────
+        // SDXL 要求尺寸必须是: 1024x1024, 1152x896, 1216x832, 1344x768,
+        //   1536x640, 640x1536, 768x1344, 832x1216, 896x1152
+        // 统一 resize 到 1024x1024（最安全）
+        let processedBuffer = file.buffer;
+        const metadata = await (0, sharp_1.default)(file.buffer).metadata();
+        const { width = 0, height = 0 } = metadata;
+        if (width < 1024 || height < 1024) {
+            console.log(`[img2img] Resizing image from ${width}x${height} to 1024x1024`);
+            processedBuffer = await (0, sharp_1.default)(file.buffer)
+                .resize(1024, 1024, { fit: 'cover', position: 'centre' })
+                .png()
+                .toBuffer();
+        }
         // Stability AI v1 img2img
         // 手动构建 multipart/form-data body
         // Node.js form-data 库生成的 multipart 被 Stability 拒绝
@@ -161,9 +182,8 @@ router.post('/image-to-image', upload.single('image'), async (req, res) => {
             parts.push(data);
             parts.push(Buffer.from('\r\n'));
         };
-        // 确保 init_image 是 PNG 格式
-        // Multer 的 file.buffer 可能是任意格式，统一当 PNG 处理
-        addFile('init_image', 'init_image.png', file.buffer, 'image/png');
+        // 使用 resize 后的图片（或原图如果已足够大）
+        addFile('init_image', 'init_image.png', processedBuffer, 'image/png');
         addField('init_image_mode', 'IMAGE_STRENGTH');
         addField('image_strength', String(1 - imageStrength));
         addField('text_prompts[0][text]', enhancedPrompt);
@@ -174,6 +194,8 @@ router.post('/image-to-image', upload.single('image'), async (req, res) => {
         // Closing boundary
         parts.push(Buffer.from(`--${boundary}--\r\n`));
         const body = Buffer.concat(parts);
+        console.log('[img2img] Calling Stability AI img2img, body size:', body.length);
+        const startTime = Date.now();
         const response = await fetch(`https://api.stability.ai/v1/generation/${tier.model}/image-to-image`, {
             method: 'POST',
             headers: {
@@ -185,10 +207,12 @@ router.post('/image-to-image', upload.single('image'), async (req, res) => {
         });
         if (!response.ok) {
             const error = await response.json();
+            console.error('[img2img] Stability AI error:', response.status, error);
             return res
                 .status(502)
                 .json({ error: 'AI style transfer failed', details: error });
         }
+        console.log('[img2img] Stability AI responded OK, elapsed:', Date.now() - startTime, 'ms');
         const result = await response.json();
         const imageUrl = await uploadToStorage(result.artifacts[0].base64, style, userId || null, enhancedPrompt, null, style, 'image-to-image');
         res.json({
