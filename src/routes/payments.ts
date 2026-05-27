@@ -22,14 +22,14 @@ async function supabaseFetch(table: string, query?: string, options?: { method?:
   return { ok: res.ok, status: res.status, data };
 }
 
-// Credit pack config: product variant ID → credits
+// Credit pack config: Lemon Squeezy Variant ID → credits
 const CREDIT_PACKS: Record<string, { credits: number; pack: string; price_cents: number }> = {
-  // Starter Pack
-  '410a3ac1-432f-4ec2-8f30-06ce699b2caa': { credits: 10, pack: 'starter', price_cents: 500 },
-  // Popular Pack
-  'f7ee516a-3320-4fbe-bb47-2845a7db9912': { credits: 35, pack: 'popular', price_cents: 1500 },
-  // Pro Pack
-  'd69356b8-1303-4c91-a39f-2f55cc598b6d': { credits: 80, pack: 'pro', price_cents: 3000 },
+  // Starter Pack $5 / 10 credits
+  '1712203': { credits: 10, pack: 'starter', price_cents: 500 },
+  // Popular Pack $15 / 35 credits
+  '1712229': { credits: 35, pack: 'popular', price_cents: 1500 },
+  // Pro Pack $30 / 80 credits
+  '1712238': { credits: 80, pack: 'pro', price_cents: 3000 },
 };
 
 // GET /api/payments/health - 健康检查
