@@ -43,24 +43,37 @@ router.post('/webhook', async (req: Request, res: Response) => {
     const signature = req.headers['x-signature'] as string;
     const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
 
-    // HMAC-SHA256 验签
+    // HMAC-SHA256 验签 - 必须用原始 body 字节
     if (!signature || !secret) {
-      console.error('Missing signature or webhook secret');
+      console.error('[Webhook] Missing signature or webhook secret');
       return res.status(400).json({ error: 'Missing signature' });
     }
 
-    const rawBody = JSON.stringify(req.body);
+    // 获取原始 body (Buffer from express.raw() or object from express.json())
+    let rawBytes: string;
+    if (Buffer.isBuffer(req.body)) {
+      rawBytes = req.body.toString('utf8');
+    } else if (typeof req.body === 'object' && req.body !== null) {
+      // 已解析的 JSON - 重新序列化用于验签
+      rawBytes = JSON.stringify(req.body);
+    } else {
+      console.error('[Webhook] Unknown body type:', typeof req.body);
+      return res.status(400).json({ error: 'Invalid body type' });
+    }
+
     const crypto = await import('crypto');
     const expectedSig = crypto.createHmac('sha256', secret)
-      .update(rawBody)
+      .update(rawBytes, 'utf8')
       .digest('hex');
 
     if (signature !== expectedSig) {
-      console.error('Webhook signature mismatch');
+      console.error(`[Webhook] Signature mismatch. Got: ${signature.slice(0, 16)}..., Expected: ${expectedSig.slice(0, 16)}...`);
       return res.status(403).json({ error: 'Invalid signature' });
     }
 
+    // Lemon Squeezy headers: X-Signature, X-Event-Name, X-Store-ID
     const eventName = req.headers['x-event-name'] as string;
+    // req.body 已经由 express.json() 解析为对象
     const payload = req.body;
     const data = payload?.data;
     const meta = payload?.meta;
