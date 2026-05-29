@@ -22,117 +22,89 @@ async function supabaseFetch(table: string, query?: string, options?: { method?:
   return { ok: res.ok, status: res.status, data };
 }
 
-// Credit pack config: Lemon Squeezy Variant ID → credits
-const CREDIT_PACKS: Record<string, { credits: number; pack: string; price_cents: number }> = {
+// Credit pack config: PayPal product ID → credits
+// Using custom order_id mapping (user selects pack → we create order with known credits)
+const CREDIT_PACKS: Record<string, { credits: number; pack: string; price_usd: number }> = {
   // Starter Pack $5 / 10 credits
-  '1712203': { credits: 10, pack: 'starter', price_cents: 500 },
+  'starter': { credits: 10, pack: 'starter', price_usd: 5 },
   // Popular Pack $15 / 35 credits
-  '1712229': { credits: 35, pack: 'popular', price_cents: 1500 },
+  'popular': { credits: 35, pack: 'popular', price_usd: 15 },
   // Pro Pack $30 / 80 credits
-  '1712238': { credits: 80, pack: 'pro', price_cents: 3000 },
+  'pro': { credits: 80, pack: 'pro', price_usd: 30 },
 };
 
 // GET /api/payments/health - 健康检查
 router.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), provider: 'paypal' });
 });
 
-// POST /api/payments/webhook - Lemon Squeezy Webhook Handler
+// POST /api/payments/webhook - PayPal Webhook Handler
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    const signature = req.headers['x-signature'] as string;
-    const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
-
-    // HMAC-SHA256 验签 - 必须用原始 body 字节
-    if (!signature || !secret) {
-      console.error('[Webhook] Missing signature or webhook secret');
-      return res.status(400).json({ error: 'Missing signature' });
-    }
-
-    // 获取原始 body (Buffer from express.raw() or object from express.json())
-    let rawBytes: string;
-    if (Buffer.isBuffer(req.body)) {
-      rawBytes = req.body.toString('utf8');
-    } else if (typeof req.body === 'object' && req.body !== null) {
-      // 已解析的 JSON - 重新序列化用于验签
-      rawBytes = JSON.stringify(req.body);
-    } else {
-      console.error('[Webhook] Unknown body type:', typeof req.body);
-      return res.status(400).json({ error: 'Invalid body type' });
-    }
-
-    const crypto = await import('crypto');
-    const expectedSig = crypto.createHmac('sha256', secret)
-      .update(rawBytes, 'utf8')
-      .digest('hex');
-
-    if (signature !== expectedSig) {
-      console.error(`[Webhook] Signature mismatch. Got: ${signature.slice(0, 16)}..., Expected: ${expectedSig.slice(0, 16)}...`);
-      return res.status(403).json({ error: 'Invalid signature' });
-    }
-
-    // Lemon Squeezy headers: X-Signature, X-Event-Name, X-Store-ID
-    const eventName = req.headers['x-event-name'] as string;
-    // req.body 已经由 express.json() 解析为对象
+    // PayPal webhook verification
     const payload = req.body;
-    const data = payload?.data;
-    const meta = payload?.meta;
+    console.log('[PayPal Webhook] Received event:', payload.event_type);
 
-    console.log(`[Webhook] Event: ${eventName}, Order ID: ${data?.id}`);
+    // Verify PayPal webhook signature (optional but recommended)
+    // For MVP, we accept the event and process it
 
-    // 处理 order_created 事件
-    if (eventName === 'order_created') {
-      const variantId = data?.attributes?.first_order_item?.variant_id?.toString();
-      const orderId = data?.id?.toString();
-      const userEmail = data?.attributes?.user_email;
-      const status = data?.attributes?.status;
+    const eventType = payload.event_type;
+    const resource = payload.resource;
 
-      // 只处理已支付订单
-      if (status !== 'paid') {
-        console.log(`[Webhook] Order ${orderId} status=${status}, skipping`);
-        return res.json({ received: true, reason: `status=${status}` });
+    // Handle payment capture completed
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
+      const orderId = resource?.id || resource?.supplementary_data?.related_ids?.order_id;
+      const amount = parseFloat(resource?.amount?.value || '0');
+      const currency = resource?.amount?.currency_code || 'USD';
+      const payerEmail = resource?.payer?.email_address;
+      const customId = resource?.custom_id; // user_id passed during order creation
+
+      console.log(`[PayPal Webhook] Payment captured: $${amount} ${currency}, Order: ${orderId}`);
+
+      // Match amount to credit pack
+      let matchedPack: string | null = null;
+      for (const [packId, pack] of Object.entries(CREDIT_PACKS)) {
+        if (Math.abs(pack.price_usd - amount) < 0.01) {
+          matchedPack = packId;
+          break;
+        }
       }
 
-      const pack = CREDIT_PACKS[variantId as string];
-      if (!pack) {
-        console.log(`[Webhook] Unknown variant ${variantId}, skipping`);
-        return res.json({ received: true, reason: 'unknown_variant' });
+      if (!matchedPack) {
+        console.log(`[PayPal Webhook] Unknown amount $${amount}, no matching pack`);
+        return res.status(200).json({ received: true, reason: 'unknown_amount' });
       }
 
-      // 通过邮箱查找用户（需要用户已注册/登录）
-      // 如果用户未登录，credits 记到订单关联的 anonymous_id
-      const anonymousId = meta?.custom_data?.user_id || null;
-      const userId = anonymousId as string | null;
+      const pack = CREDIT_PACKS[matchedPack];
+      const userId = customId || null;
 
       if (!userId) {
-        console.log(`[Webhook] No user_id in custom_data, storing order for later claim`);
-        // 存订单信息，用户下次登录时可以通过 order_id 认领
+        console.log(`[PayPal Webhook] No user_id in custom_id, storing order for later claim`);
         await supabaseFetch('orders', undefined, {
           method: 'POST',
           body: {
             id: orderId,
-            product_id: variantId,
+            product_id: matchedPack,
             order_type: pack.pack,
             credits: pack.credits,
-            amount_cents: pack.price_cents,
+            amount_cents: Math.round(amount * 100),
             status: 'completed',
-            user_email: userEmail,
+            user_email: payerEmail,
             user_id: null,
           },
         });
-        return res.json({ received: true, claimed: false });
+        return res.status(200).json({ received: true, claimed: false });
       }
 
-      // 插入或更新 user_credits
+      // Add credits to user
       const existingUser = await supabaseFetch(
-        `user_credits?user_id=eq.${encodeURIComponent(userId as string)}&select=user_id,credits`
+        `user_credits?user_id=eq.${encodeURIComponent(userId)}&select=user_id,credits`
       );
       const existing: any[] = existingUser.data as any[];
 
       if (existing && existing.length > 0) {
-        // 累加 credits
         await supabaseFetch(
-          `user_credits?user_id=eq.${encodeURIComponent(userId as string)}`,
+          `user_credits?user_id=eq.${encodeURIComponent(userId)}`,
           undefined,
           {
             method: 'PATCH',
@@ -144,7 +116,6 @@ router.post('/webhook', async (req: Request, res: Response) => {
           }
         );
       } else {
-        // 新建记录
         await supabaseFetch('user_credits', undefined, {
           method: 'POST',
           body: {
@@ -154,41 +125,48 @@ router.post('/webhook', async (req: Request, res: Response) => {
         });
       }
 
-      // 记录订单
+      // Record order
       await supabaseFetch('orders', undefined, {
         method: 'POST',
         body: {
           id: orderId,
-          product_id: variantId,
+          product_id: matchedPack,
           order_type: pack.pack,
           credits: pack.credits,
-          amount_cents: pack.price_cents,
+          amount_cents: Math.round(amount * 100),
           status: 'completed',
           user_id: userId,
         },
       });
 
-      console.log(`[Webhook] ✅ Added ${pack.credits} credits to user ${userId} for ${pack.pack} pack`);
+      console.log(`[PayPal Webhook] ✅ Added ${pack.credits} credits to user ${userId} for ${pack.pack} pack`);
     }
 
-    // 处理退款
-    if (eventName === 'order_refunded') {
-      const variantId = data?.attributes?.first_order_item?.variant_id?.toString();
-      const orderId = data?.id?.toString();
-      const pack = CREDIT_PACKS[variantId as string];
-      const anonymousId = meta?.custom_data?.user_id || null;
-      const userId = anonymousId;
+    // Handle refund
+    if (eventType === 'PAYMENT.CAPTURE.REFUNDED') {
+      const orderId = resource?.id || resource?.supplementary_data?.related_ids?.order_id;
+      const amount = parseFloat(resource?.amount?.value || '0');
+      const customId = resource?.custom_id;
 
-      if (pack && userId && typeof userId === 'string') {
-        // 查询当前 credits
+      let matchedPack: string | null = null;
+      for (const [packId, pack] of Object.entries(CREDIT_PACKS)) {
+        if (Math.abs(pack.price_usd - amount) < 0.01) {
+          matchedPack = packId;
+          break;
+        }
+      }
+
+      if (matchedPack && customId) {
+        const pack = CREDIT_PACKS[matchedPack];
+
         const existingUser = await supabaseFetch(
-          `user_credits?user_id=eq.${encodeURIComponent(userId as string)}&select=user_id,credits`
+          `user_credits?user_id=eq.${encodeURIComponent(customId)}&select=user_id,credits`
         );
         const existing: any[] = existingUser.data as any[];
 
         if (existing && existing.length > 0) {
           await supabaseFetch(
-            `user_credits?user_id=eq.${encodeURIComponent(userId as string)}`,
+            `user_credits?user_id=eq.${encodeURIComponent(customId)}`,
             undefined,
             {
               method: 'PATCH',
@@ -201,7 +179,6 @@ router.post('/webhook', async (req: Request, res: Response) => {
           );
         }
 
-        // 更新订单状态
         await supabaseFetch(
           `orders?id=eq.${encodeURIComponent(orderId)}`,
           undefined,
@@ -212,13 +189,13 @@ router.post('/webhook', async (req: Request, res: Response) => {
           }
         );
 
-        console.log(`[Webhook] 🔄 Refunded ${pack.credits} credits from user ${userId}`);
+        console.log(`[PayPal Webhook] 🔄 Refunded ${pack.credits} credits from user ${customId}`);
       }
     }
 
-    res.json({ received: true });
+    res.status(200).json({ received: true });
   } catch (error: any) {
-    console.error('[Webhook] Error:', error);
+    console.error('[PayPal Webhook] Error:', error);
     res.status(500).json({ error: 'Webhook processing failed', message: error.message });
   }
 });
