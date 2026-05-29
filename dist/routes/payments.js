@@ -30,6 +30,88 @@ const CREDIT_PACKS = {
     // Pro Pack $30 / 80 credits
     'pro': { credits: 80, pack: 'pro', price_usd: 30 },
 };
+// POST /api/payments/create-order - Create PayPal order and return approval URL
+router.post('/create-order', async (req, res) => {
+    try {
+        const { packId } = req.body;
+        const pack = CREDIT_PACKS[packId];
+        if (!pack) {
+            return res.status(400).json({ error: 'Invalid pack ID' });
+        }
+        // Get PayPal access token
+        const clientId = process.env.PAYPAL_CLIENT_ID;
+        const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+        const isSandbox = process.env.PAYPAL_MODE === 'sandbox';
+        const baseUrl = isSandbox
+            ? 'https://api-m.sandbox.paypal.com'
+            : 'https://api-m.paypal.com';
+        // 1. Get access token
+        const tokenRes = await fetch(`${baseUrl}/v1/oauth2/token`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+            },
+            body: 'grant_type=client_credentials',
+        });
+        if (!tokenRes.ok) {
+            const errText = await tokenRes.text();
+            console.error('[PayPal] Token error:', tokenRes.status, errText);
+            return res.status(500).json({ error: 'Failed to authenticate with PayPal' });
+        }
+        const tokenData = await tokenRes.json();
+        const accessToken = tokenData.access_token;
+        // 2. Create order
+        const orderRes = await fetch(`${baseUrl}/v2/checkout/orders`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`,
+                'PayPal-Request-Id': `artshift-${Date.now()}-${packId}`,
+            },
+            body: JSON.stringify({
+                intent: 'CAPTURE',
+                purchase_units: [{
+                        reference_id: packId,
+                        description: `ArtShift ${pack.pack} - ${pack.credits} AI image credits`,
+                        amount: {
+                            currency_code: 'USD',
+                            value: String(pack.price_usd),
+                        },
+                        custom_id: packId,
+                    }],
+                application_context: {
+                    brand_name: 'ArtShift', //          landing_page: 'NO_PREFERENCE',
+                    user_action: 'PAY_NOW',
+                    return_url: `${process.env.FRONTEND_URL || 'https://artshift.api-tokenmaster.com'}/payment/success`,
+                    cancel_url: `${process.env.FRONTEND_URL || 'https://artshift.api-tokenmaster.com'}/payment/cancel`,
+                },
+            }),
+        });
+        if (!orderRes.ok) {
+            const errText = await orderRes.text();
+            console.error('[PayPal] Order error:', orderRes.status, errText);
+            return res.status(500).json({ error: 'Failed to create PayPal order' });
+        }
+        const orderData = await orderRes.json();
+        // Find the approval URL from the links
+        const approvalLink = orderData.links?.find((l) => l.rel === 'approve');
+        if (!approvalLink?.href) {
+            console.error('[PayPal] No approval link in response:', orderData);
+            return res.status(500).json({ error: 'No approval URL returned from PayPal' });
+        }
+        console.log(`[PayPal] Order created: ${orderData.id} for ${packId} ($${pack.price_usd})`);
+        res.json({
+            orderId: orderData.id,
+            approvalUrl: approvalLink.href,
+        });
+    }
+    catch (error) {
+        console.error('[PayPal create-order] Error:', error);
+        res.status(500).json({ error: 'Failed to create payment order', message: error.message });
+    }
+});
 // GET /api/payments/health - 健康检查
 router.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), provider: 'paypal' });
