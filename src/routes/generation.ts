@@ -89,6 +89,39 @@ router.get('/quality-tiers', (_req: Request, res: Response) => {
   res.json({ tiers });
 });
 
+// ─── Credit helper ──────────────────────────────────────
+async function deductCreditsIfNeeded(userId: string | null, tier: { credits: number }): Promise<{ ok: boolean; error?: string; credits?: number }> {
+  if (!userId || tier.credits === 0) return { ok: true };
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('user_credits')
+    .select('credits')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) {
+    return { ok: false, error: 'No credit account found', credits: 0 };
+  }
+
+  const current = data.credits ?? 0;
+  if (current < tier.credits) {
+    return { ok: false, error: 'Insufficient credits', credits: current };
+  }
+
+  const { error: updateError } = await supabase
+    .from('user_credits')
+    .update({ credits: current - tier.credits, updated_at: new Date().toISOString() })
+    .eq('user_id', userId);
+
+  if (updateError) {
+    console.error('Failed to deduct credits:', updateError);
+    return { ok: false, error: 'Failed to deduct credits', credits: current };
+  }
+
+  return { ok: true, credits: current - tier.credits };
+}
+
 // ─── POST /api/generation/text-to-image ────────────────────
 router.post('/text-to-image', async (req: Request, res: Response) => {
   try {
@@ -99,6 +132,17 @@ router.post('/text-to-image', async (req: Request, res: Response) => {
     }
 
     const tier = QUALITY_TIERS[quality || 'standard'] || QUALITY_TIERS.standard;
+
+    // Premium quality requires login + credits
+    if (tier.credits > 0) {
+      if (!userId) {
+        return res.status(401).json({ error: 'Please log in to use Premium quality' });
+      }
+      const check = await deductCreditsIfNeeded(userId, tier);
+      if (!check.ok) {
+        return res.status(402).json({ error: check.error, credits: check.credits });
+      }
+    }
     const enhancedPrompt = `${prompt}, ${STYLE_PRESETS[style] || style}`;
 
     const response = await fetch(
@@ -183,6 +227,18 @@ router.post(
       }
 
       const tier = QUALITY_TIERS[quality || 'standard'] || QUALITY_TIERS.standard;
+
+      // Premium quality requires login + credits
+      if (tier.credits > 0) {
+        if (!userId) {
+          return res.status(401).json({ error: 'Please log in to use Premium quality' });
+        }
+        const check = await deductCreditsIfNeeded(userId, tier);
+        if (!check.ok) {
+          return res.status(402).json({ error: check.error, credits: check.credits });
+        }
+      }
+
       const stylePrompt = STYLE_PRESETS[style] || style;
       const enhancedPrompt = prompt
         ? `${prompt}, ${stylePrompt}`

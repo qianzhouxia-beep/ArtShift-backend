@@ -112,6 +112,17 @@ router.post('/create-order', async (req, res) => {
         res.status(500).json({ error: 'Failed to create payment order', message: error.message });
     }
 });
+// GET /api/payments/debug-env - Debug environment variables (remove in prod)
+router.get('/debug-env', (_req, res) => {
+    res.json({
+        hasClientId: !!process.env.PAYPAL_CLIENT_ID,
+        clientIdPrefix: process.env.PAYPAL_CLIENT_ID?.substring(0, 10),
+        hasSecret: !!process.env.PAYPAL_CLIENT_SECRET,
+        secretPrefix: process.env.PAYPAL_CLIENT_SECRET?.substring(0, 5),
+        mode: process.env.PAYPAL_MODE,
+        frontendUrl: process.env.FRONTEND_URL,
+    });
+});
 // GET /api/payments/health - 健康检查
 router.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), provider: 'paypal' });
