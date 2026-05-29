@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 import sharp from 'sharp';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const router = Router();
 
@@ -423,7 +424,18 @@ router.post('/generate', async (req: Request, res: Response) => {
   }
 });
 
-// ─── 上传到 Supabase Storage + 保存记录 ────────────────────
+// ─── 上传到 Cloudflare R2 + 保存记录到 Supabase ──────────────
+function getR2Client(): S3Client {
+  return new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+  });
+}
+
 async function uploadToStorage(
   base64Image: string,
   style: string,
@@ -434,28 +446,26 @@ async function uploadToStorage(
   mode: string
 ): Promise<string> {
   const supabase = getSupabase();
+  const r2 = getR2Client();
+  const bucketName = process.env.R2_BUCKET_NAME || 'artshift';
+  const r2PublicUrl = process.env.R2_PUBLIC_URL || '';
   const fileName = `gen_${Date.now()}_${style}.png`;
   const buffer = Buffer.from(base64Image, 'base64');
 
-  const { error: uploadError } = await supabase.storage
-    .from('generated-images')
-    .upload(fileName, buffer, {
-      contentType: 'image/png',
-      upsert: false,
-    });
+  // Upload to R2 (S3-compatible)
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: fileName,
+      Body: buffer,
+      ContentType: 'image/png',
+    })
+  );
 
-  if (uploadError) {
-    console.error('Storage upload error:', uploadError);
-    throw new Error('Failed to save image');
-  }
+  // Public URL for R2
+  const imageUrl = `${r2PublicUrl}/${fileName}`;
 
-  const { data: urlData } = supabase.storage
-    .from('generated-images')
-    .getPublicUrl(fileName);
-
-  const imageUrl = urlData.publicUrl;
-
-  // 保存生成记录
+  // Save generation record to Supabase DB
   const { error: dbError } = await supabase.from('generations').insert({
     user_id: userId,
     prompt,
@@ -467,7 +477,7 @@ async function uploadToStorage(
 
   if (dbError) {
     console.error('DB insert error:', dbError);
-    // 不抛出错误，图片已生成
+    // Don't throw — image is already saved
   }
 
   return imageUrl;

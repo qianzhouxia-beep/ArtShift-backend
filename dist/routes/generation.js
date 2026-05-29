@@ -7,6 +7,7 @@ const express_1 = require("express");
 const supabase_js_1 = require("@supabase/supabase-js");
 const multer_1 = __importDefault(require("multer"));
 const sharp_1 = __importDefault(require("sharp"));
+const client_s3_1 = require("@aws-sdk/client-s3");
 const router = (0, express_1.Router)();
 // Multer 配置：内存存储，限制 10MB
 const upload = (0, multer_1.default)({
@@ -330,26 +331,34 @@ router.post('/generate', async (req, res) => {
             .json({ error: 'Generation failed', message: error.message });
     }
 });
-// ─── 上传到 Supabase Storage + 保存记录 ────────────────────
+// ─── 上传到 Cloudflare R2 + 保存记录到 Supabase ──────────────
+function getR2Client() {
+    return new client_s3_1.S3Client({
+        region: 'auto',
+        endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+            accessKeyId: process.env.R2_ACCESS_KEY_ID,
+            secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+        },
+    });
+}
 async function uploadToStorage(base64Image, style, userId, prompt, negativePrompt, styleId, mode) {
     const supabase = getSupabase();
+    const r2 = getR2Client();
+    const bucketName = process.env.R2_BUCKET_NAME || 'artshift';
+    const r2PublicUrl = process.env.R2_PUBLIC_URL || '';
     const fileName = `gen_${Date.now()}_${style}.png`;
     const buffer = Buffer.from(base64Image, 'base64');
-    const { error: uploadError } = await supabase.storage
-        .from('generated-images')
-        .upload(fileName, buffer, {
-        contentType: 'image/png',
-        upsert: false,
-    });
-    if (uploadError) {
-        console.error('Storage upload error:', uploadError);
-        throw new Error('Failed to save image');
-    }
-    const { data: urlData } = supabase.storage
-        .from('generated-images')
-        .getPublicUrl(fileName);
-    const imageUrl = urlData.publicUrl;
-    // 保存生成记录
+    // Upload to R2 (S3-compatible)
+    await r2.send(new client_s3_1.PutObjectCommand({
+        Bucket: bucketName,
+        Key: fileName,
+        Body: buffer,
+        ContentType: 'image/png',
+    }));
+    // Public URL for R2
+    const imageUrl = `${r2PublicUrl}/${fileName}`;
+    // Save generation record to Supabase DB
     const { error: dbError } = await supabase.from('generations').insert({
         user_id: userId,
         prompt,
@@ -360,7 +369,7 @@ async function uploadToStorage(base64Image, style, userId, prompt, negativePromp
     });
     if (dbError) {
         console.error('DB insert error:', dbError);
-        // 不抛出错误，图片已生成
+        // Don't throw — image is already saved
     }
     return imageUrl;
 }
